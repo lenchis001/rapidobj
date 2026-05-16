@@ -34,6 +34,7 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -87,6 +88,8 @@ static constexpr struct {
 enum class Load { Mandatory, Optional };
 
 struct MaterialLibrary final {
+    using Loader = std::function<std::optional<std::string>(const std::filesystem::path&)>;
+
     static MaterialLibrary Default() { return MaterialLibrary(); }
     static MaterialLibrary Default(Load policy) { return MaterialLibrary(policy); }
 
@@ -102,6 +105,11 @@ struct MaterialLibrary final {
 
     static MaterialLibrary String(std::string_view text) { return MaterialLibrary(text); }
 
+    static MaterialLibrary Callback(Loader loader, Load policy = Load::Mandatory)
+    {
+        return MaterialLibrary(std::move(loader), policy);
+    }
+
     static MaterialLibrary Ignore() { return MaterialLibrary(nullptr); }
 
     const auto& Value() const noexcept { return m_value; }
@@ -114,9 +122,11 @@ struct MaterialLibrary final {
         : m_value(std::move(paths)), m_policy(policy)
     {}
     MaterialLibrary(std::string_view text) noexcept : m_value(text) {}
+    MaterialLibrary(Loader&& loader, Load policy) noexcept : m_value(std::move(loader)), m_policy(policy) {}
     MaterialLibrary(std::nullptr_t) noexcept : m_value(nullptr) {}
 
-    using Variant = std::variant<std::monostate, std::nullptr_t, std::vector<std::filesystem::path>, std::string_view>;
+    using Variant =
+        std::variant<std::monostate, std::nullptr_t, std::vector<std::filesystem::path>, std::string_view, Loader>;
 
     Variant             m_value{};
     std::optional<Load> m_policy{};
@@ -6142,6 +6152,26 @@ inline auto ParseMaterialLibrary(SharedContext* context)
         return ParseMaterials(std::get<std::string_view>(context->material.library->Value()));
     }
 
+    if (std::holds_alternative<MaterialLibrary::Loader>(context->material.library->Value())) {
+        auto mtlpath = std::filesystem::path(context->material.library_name);
+        if (mtlpath.is_relative() && !context->material.basepath.empty()) {
+            mtlpath = context->material.basepath / mtlpath;
+        }
+
+        auto content = std::optional<std::string>();
+        try {
+            content = std::get<MaterialLibrary::Loader>(context->material.library->Value())(mtlpath);
+        } catch (...) {
+            return ParseMaterialsResult{ {}, {}, Error{ std::make_error_code(std::io_errc::stream) } };
+        }
+
+        if (!content) {
+            return ParseMaterialsResult{ {}, {}, Error{ make_error_code(rapidobj_errc::MaterialFileError) } };
+        }
+
+        return ParseMaterials(*content);
+    }
+
     auto filepath = FindBestPath(context);
 
     if (filepath.empty()) {
@@ -7172,6 +7202,8 @@ inline Result ParseFile(const std::filesystem::path& filepath, const MaterialLib
         context->material.library = &material_library;
     } else if (std::get_if<std::string_view>(material_library_value) != nullptr) {
         context->material.library = &material_library;
+    } else if (std::get_if<MaterialLibrary::Loader>(material_library_value) != nullptr) {
+        context->material.library = &material_library;
     } else {
         return Result{ Attributes{}, Shapes{}, Materials{}, Error{ rapidobj_errc::InternalError } };
     }
@@ -7252,6 +7284,8 @@ inline Result ParseStream(std::istream& is, const MaterialLibrary& material_libr
         }
         context->material.library = &material_library;
     } else if (std::get_if<std::string_view>(material_library_value) != nullptr) {
+        context->material.library = &material_library;
+    } else if (std::get_if<MaterialLibrary::Loader>(material_library_value) != nullptr) {
         context->material.library = &material_library;
     } else {
         return Result{ Attributes{}, Shapes{}, Materials{}, Error{ rapidobj_errc::InternalError } };

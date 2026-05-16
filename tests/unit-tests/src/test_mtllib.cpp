@@ -386,6 +386,40 @@ TEST_CASE("rapidobj::ParseFile(MaterialLibrary)")
         CHECK(result.materials.empty());
     }
 
+    // ParseFile, MaterialLibrary::Callback
+    {
+        auto mtllib = MaterialLibrary::Callback([](const fs::path& path) {
+            CHECK("cube.mtl" == path.filename().string());
+            return std::optional<std::string>{ std::string(purple_materials) };
+        });
+
+        auto result = ParseFile(objpath, mtllib);
+
+        CHECK(kSuccess == result.error.code);
+
+        CHECK(3 == result.materials.size());
+
+        CHECK("foo" == result.materials.front().name);
+        CHECK(kPurple == result.materials.front().diffuse);
+
+        CHECK(IDsOkay(result.shapes.front().mesh.material_ids));
+    }
+
+    // ParseFile, MaterialLibrary::Callback, optional loading
+    {
+        auto mtllib = MaterialLibrary::Callback(
+            [](const fs::path&) { return std::optional<std::string>{}; },
+            Load::Optional);
+
+        auto result = ParseFile(objpath, mtllib);
+
+        CHECK(kSuccess == result.error.code);
+
+        CHECK(result.materials.empty());
+
+        CHECK(IDsOkay(result.shapes.front().mesh.material_ids));
+    }
+
     // ParseFile, MaterialLibrary::Ignore
     {
         auto mtllib = MaterialLibrary::Ignore();
@@ -800,6 +834,44 @@ TEST_CASE("rapidobj::ParseStream(MaterialLibrary)")
         CHECK(rapidobj_errc::MaterialNotFoundError == result.error.code);
 
         CHECK(result.materials.empty());
+    }
+
+    // ParseStream, MaterialLibrary::Callback
+    {
+        auto stream = std::ifstream(objpath);
+
+        auto mtllib = MaterialLibrary::Callback([](const fs::path& path) {
+            CHECK("cube.mtl" == path.string());
+            return std::optional<std::string>{ std::string(purple_materials) };
+        });
+
+        auto result = ParseStream(stream, mtllib);
+
+        CHECK(kSuccess == result.error.code);
+
+        CHECK(3 == result.materials.size());
+
+        CHECK("foo" == result.materials.front().name);
+        CHECK(kPurple == result.materials.front().diffuse);
+
+        CHECK(IDsOkay(result.shapes.front().mesh.material_ids));
+    }
+
+    // ParseStream, MaterialLibrary::Callback, optional loading
+    {
+        auto stream = std::ifstream(objpath);
+
+        auto mtllib = MaterialLibrary::Callback(
+            [](const fs::path&) { return std::optional<std::string>{}; },
+            Load::Optional);
+
+        auto result = ParseStream(stream, mtllib);
+
+        CHECK(kSuccess == result.error.code);
+
+        CHECK(result.materials.empty());
+
+        CHECK(IDsOkay(result.shapes.front().mesh.material_ids));
     }
 
     // ParseStream, MaterialLibrary::Ignore
